@@ -11,7 +11,7 @@ import (
 
 func main() {
 	LoadEnv()
-	m := NewSFTPmanager(8)
+	m := NewSFTPmanager(100)
 	go m.Run()
 	log.Println("new t")
 	t := &Task{
