@@ -137,17 +137,15 @@ func NewSFTPmanager(numClients int) *SFTPmanager {
 		tasksMap: make(map[int]*Task),
 		closeCh:  make(chan *Worker),
 	}
-
 	for i := 0; i < numClients; i++ {
 		log.Println("<storage> [SFTP] Connecting...")
 		w, err := m.AddWorker()
 		go w.monitor(m)
-
 		if err != nil {
 			log.Println("Failed to add client:", err)
 		}
 	}
-
+	log.Println("SFTP Manager is ready")
 	return m
 }
 func newWorker(id int, m *SFTPmanager) *Worker {
@@ -181,8 +179,8 @@ func newWorker(id int, m *SFTPmanager) *Worker {
 	return s
 }
 func (m *SFTPmanager) AddWorker() (*Worker, error) {
-	m.cMu.Lock()
 	worker := newWorker(len(m.workers)+1, m)
+	m.cMu.Lock()
 	err := worker.connect()
 	if err != nil {
 		return nil, err
