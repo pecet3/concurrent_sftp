@@ -17,10 +17,8 @@ FROM scratch
 WORKDIR /
 
 # Kopiowanie skompilowanej aplikacji z etapu budowania
-COPY --from=builder /app/main .
+COPY --from=builder /app/ .
 
-# Kopiowanie pliku .env
-COPY --from=builder /app/.env .
 
 # Kopiowanie certyfikatów CA
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
@@ -30,3 +28,5 @@ ENV PORT=9000
 
 # Wystawienie portu
 EXPOSE 9000
+
+CMD ["./main"]

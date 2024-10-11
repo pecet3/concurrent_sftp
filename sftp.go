@@ -20,10 +20,13 @@ const (
 )
 
 type Task struct {
-	ID     int
-	DoneCh chan (bool)
-	Status string
-	Writer io.Writer
+	ID           int
+	DoneCh       chan (*Task)
+	Status       string
+	Writer       io.Writer
+	Ctx          context.Context
+	Wg           sync.WaitGroup
+	RetryCounter int
 }
 
 func (t *Task) Process() {
@@ -32,39 +35,40 @@ func (t *Task) Process() {
 
 }
 func (m *SFTPmanager) addTask(t *Task) {
+	log.Println("adding task ", t.ID)
 	m.tMu.Lock()
 	defer m.tMu.Unlock()
 	m.tasksMap[t.ID] = t
 }
 
 func (m *SFTPmanager) removeTask(id int) {
+	log.Println("Removing task ", id)
 	m.tMu.Lock()
 	defer m.tMu.Unlock()
 	delete(m.tasksMap, id)
 }
 func (m *SFTPmanager) getTask(id int) *Task {
-	m.cMu.Lock()
-	defer m.cMu.Unlock()
+	m.tMu.Lock()
+	defer m.tMu.Unlock()
 	if task, exists := m.tasksMap[id]; exists {
 		return task
 	}
 	return nil
 }
 func (m *SFTPmanager) getWaitingTask() *Task {
-	m.cMu.Lock()
-	defer m.cMu.Unlock()
+	m.tMu.Lock()
+	defer m.tMu.Unlock()
 	for i, t := range m.tasksMap {
 		if t.Status == TASK_STATUS_WAITING {
 			log.Println("get waiting task", i)
-
 			return t
 		}
 	}
 	return nil
 }
 func (m *SFTPmanager) updateTaskStatus(id int, status string) {
-	m.cMu.Lock()
-	defer m.cMu.Unlock()
+	m.tMu.Lock()
+	defer m.tMu.Unlock()
 	log.Println("Update task", status, id)
 	if task, exists := m.tasksMap[id]; exists {
 		task.Status = status
@@ -74,39 +78,36 @@ func (m *SFTPmanager) updateTaskStatus(id int, status string) {
 type SFTPmanager struct {
 	workers  map[int]*Worker
 	tasksMap map[int]*Task
-	cMu      sync.Mutex
-	tMu      sync.Mutex
+	cMu      sync.RWMutex
+	tMu      sync.RWMutex
 	closeCh  chan (*Worker)
 	doneCh   chan *Worker
 	waitCh   chan *Task
 }
 
 type Worker struct {
-	id          int
-	client      *sftp.Client
-	ssh         *ssh.Client
-	config      *ssh.ClientConfig
-	server      string
-	maxRetries  int
-	closeCh     chan bool
-	isInUse     bool
-	sChan       chan string
-	m           *SFTPmanager
-	currentTask *Task
+	id           int
+	client       *sftp.Client
+	ssh          *ssh.Client
+	config       *ssh.ClientConfig
+	server       string
+	retryCounter int
+	closeCh      chan bool
+	isInUse      bool
+	taskCh       chan *Task
+	m            *SFTPmanager
+	currentTask  *Task
 }
 
 func (m *SFTPmanager) GetUnusingWorker() *Worker {
-	m.cMu.Lock()
-	defer m.cMu.Unlock()
-
-	log.Println("TASK")
-	for i, w := range m.workers {
-		if !w.isInUse {
-			log.Println("Issued unusing worker id", i)
-			return w
+	m.cMu.RLock()
+	defer m.cMu.RUnlock()
+	for _, uw := range m.workers {
+		if !uw.isInUse {
+			log.Println("Issued unusing worker")
+			return uw
 		}
 	}
-
 	return nil
 }
 func (m *SFTPmanager) GetWorker(id int) *Worker {
@@ -121,7 +122,7 @@ func (m *SFTPmanager) GetWorker(id int) *Worker {
 func (m *SFTPmanager) UpdateIsInUse(id int, isInUse bool) {
 	m.cMu.Lock()
 	defer m.cMu.Unlock()
-	log.Println("Update in use: ", isInUse)
+	log.Println("Update in use: ", isInUse, "worker id:", id)
 	if client, exists := m.workers[id]; exists {
 		client.isInUse = isInUse
 	}
@@ -132,26 +133,21 @@ func NewSFTPmanager(numClients int) *SFTPmanager {
 		workers:  make(map[int]*Worker),
 		doneCh:   make(chan *Worker),
 		waitCh:   make(chan *Task),
+		tMu:      sync.RWMutex{},
 		tasksMap: make(map[int]*Task),
 		closeCh:  make(chan *Worker),
 	}
-	log.Println("Initialized")
-
-	var wg sync.WaitGroup
 
 	for i := 0; i < numClients; i++ {
-		wg.Add(1)
 		log.Println("<storage> [SFTP] Connecting...")
+		w, err := m.AddWorker()
+		go w.monitor(m)
 
-		go func() {
-			wg.Done()
-			_, err := m.AddWorker()
-			if err != nil {
-				log.Println("Failed to add client:", err)
-			}
-		}()
+		if err != nil {
+			log.Println("Failed to add client:", err)
+		}
 	}
-	wg.Wait()
+
 	return m
 }
 func newWorker(id int, m *SFTPmanager) *Worker {
@@ -173,35 +169,33 @@ func newWorker(id int, m *SFTPmanager) *Worker {
 		Timeout:         30 * time.Second,
 	}
 	s := &Worker{
-		id:         id,
-		config:     config,
-		server:     server,
-		maxRetries: 5,
-		m:          m,
-		isInUse:    false,
-		sChan:      make(chan string),
+		id:           id,
+		config:       config,
+		server:       server,
+		retryCounter: 0,
+		m:            m,
+		isInUse:      false,
+		taskCh:       make(chan *Task),
 	}
 
 	return s
 }
 func (m *SFTPmanager) AddWorker() (*Worker, error) {
+	m.cMu.Lock()
 	worker := newWorker(len(m.workers)+1, m)
 	err := worker.connect()
 	if err != nil {
 		return nil, err
 	}
-
-	m.cMu.Lock()
-
 	m.workers[worker.id] = worker
 	m.cMu.Unlock()
-	log.Println("<Storage> [SFTP] added a new sftp client")
-	go worker.monitor(m)
+
+	log.Println("<Storage> [SFTP] Worker connected SFTP")
 
 	return worker, nil
 }
 
-func (m *SFTPmanager) RemoveClient(client *Worker) {
+func (m *SFTPmanager) RemoveWorker(client *Worker) {
 	m.cMu.Lock()
 	defer m.cMu.Unlock()
 
@@ -217,18 +211,33 @@ func (client *Worker) monitor(m *SFTPmanager) {
 	defer client.Close()
 	for {
 		select {
-		case s := <-client.sChan:
-			log.Println(s)
-			log.Println("<Storage> [SFTP] close client", client)
+		case t := <-client.taskCh:
+			client.currentTask = t
+			log.Println("PROCESSING NEW TASK IN WORKER", t.ID)
+			err := t.readFile(client.client, t.Writer, "/wizzard.png")
+			if err != nil {
+				log.Println("ERROR, Retrying...", t.ID, err)
+				err = t.readFile(client.client, t.Writer, "/wizzard.png")
+				if err != nil {
+					log.Println("ERROR, Retrying 2..", t.ID, err)
+					t.Ctx.Err()
+					m.doneCh <- client
+					t.DoneCh <- t
+					continue
+				}
+			}
+			m.doneCh <- client
+			t.DoneCh <- t
+			continue
 		case <-client.closeCh:
-			log.Println("")
+			log.Println("closing")
 			return
 		case <-time.After(10 * time.Second):
 			if err := client.ping(); err != nil {
 				log.Printf("Connection lost to %s, attempting to reconnect...", client.server)
 				if err := client.reconnect(); err != nil {
 					log.Printf("Failed to reconnect to %s: %v", client.server, err)
-					m.RemoveClient(client)
+					m.RemoveWorker(client)
 
 				}
 				m.closeCh <- client
@@ -241,50 +250,28 @@ func (m *SFTPmanager) Run() {
 	for {
 		select {
 		case t := <-m.waitCh:
-			t.ID = len(m.tasksMap) + 1
-			log.Println("received task", t.ID)
 			w := m.GetUnusingWorker()
 			if w != nil {
 				m.UpdateIsInUse(w.id, true)
-				go w.process(t, &m.doneCh)
+				m.updateTaskStatus(t.ID, TASK_STATUS_PROCESSING)
+				w.taskCh <- t
 				continue
 			}
-			m.addTask(t)
+			log.Println("no available worker")
+			m.updateTaskStatus(t.ID, TASK_STATUS_WAITING)
 			continue
 		case w := <-m.doneCh:
-			m.removeTask(w.currentTask.ID)
-			close(w.currentTask.DoneCh)
-			log.Println("DoneCh", w.currentTask.ID)
-			t := w.m.getWaitingTask()
-			if t == nil {
+			nt := m.getWaitingTask()
+			if nt == nil {
 				m.UpdateIsInUse(w.id, false)
 				continue
-			} else {
-
-				log.Println("Worker got waiting task", t.ID)
-				go w.process(t, &m.doneCh)
-				continue
 			}
-
+			m.UpdateIsInUse(w.id, true)
+			m.updateTaskStatus(nt.ID, TASK_STATUS_PROCESSING)
+			w.taskCh <- nt
+			log.Println("finish task", w.currentTask.ID, "worker: ", w.id)
 		}
 	}
-}
-
-func (client *Worker) process(t *Task, doneCh *chan *Worker) *Task {
-	_, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	err := t.readFile(client.client, t.Writer, "/wizzard.png")
-	if err != nil {
-		log.Println(err)
-		time.Sleep(300 * time.Millisecond)
-		t.readFile(client.client, t.Writer, "/wizzard.png")
-	}
-
-	client.currentTask = t
-	t.DoneCh <- true
-	*doneCh <- client
-
-	return t
 }
 
 func (c *Worker) connect() error {
@@ -304,7 +291,7 @@ func (c *Worker) connect() error {
 }
 
 func (c *Worker) reconnect() error {
-	for i := 0; i < c.maxRetries; i++ {
+	for i := 0; i < 5; i++ {
 		if err := c.connect(); err == nil {
 			return nil
 		}
@@ -317,18 +304,6 @@ func (c *Worker) ping() error {
 	_, err := c.client.Getwd()
 	return err
 }
-
-// func (m *SFTPmanager) CloseAll() {
-// 	m.cMu.Lock()
-// 	defer m.cMu.Unlock()
-
-// 	for client := range m.workers {
-// 		close(client.closeCh)
-// 		client.ssh.Close()
-// 		client.client.Close()
-// 	}
-// 	m.workers = make(map[*Worker]*Worker)
-// }
 
 func (s *Worker) Close() {
 	defer close(s.closeCh)
@@ -358,18 +333,8 @@ func (s *Worker) writeFile(w *Worker, src, destination string) error {
 	return err
 }
 
-// func (s *Worker) Read(w io.Writer, path string) error {
-
-// 	err := s.readFile(s.client, w, path)
-// 	if err != nil {
-// 		s.closeCh <- true
-// 		return err
-// 	}
-
-// 	return nil
-// }
-
-func (Task) readFile(client *sftp.Client, w io.Writer, path string) error {
+func (t *Task) readFile(client *sftp.Client, w io.Writer, path string) error {
+	log.Println("reading file", t.ID)
 	remoteFile, err := client.Open(path)
 	if err != nil {
 		return err
@@ -381,4 +346,17 @@ func (Task) readFile(client *sftp.Client, w io.Writer, path string) error {
 		return err
 	}
 	return nil
+}
+
+func (client *Worker) process(t *Task, doneCh *chan *Worker) {
+	defer func() {
+		t.DoneCh <- t
+		client.currentTask = t
+		*doneCh <- client
+		t.Ctx.Err()
+	}()
+	err := t.readFile(client.client, t.Writer, "/wizzard.png")
+	if err != nil {
+		log.Println("ERROR PROCESS, TASK ID", t.ID, err)
+	}
 }

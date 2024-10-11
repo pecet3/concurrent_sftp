@@ -8,21 +8,27 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"golang.org/x/exp/rand"
 )
+
+type app struct {
+	m *SFTPmanager
+	b *Blazer
+}
 
 func main() {
 	LoadEnv()
-	m := NewSFTPmanager(8)
+	m := NewSFTPmanager(3)
 	b := NewBlazer()
+	app := app{
+		m: m,
+		b: b,
+	}
 	go m.Run()
 
 	mux := http.NewServeMux()
-	mux.Handle("/test-sftp", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleTestSFTP(m, w, r)
-	}))
-	mux.Handle("/test-blazer", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleTestBlazer(b, w, r)
-	}))
+	mux.HandleFunc("/test-sftp", app.handleTestSFTP)
+	mux.HandleFunc("/test-blazer", app.handleTestBlazer)
 
 	address := "0.0.0.0:9000"
 	server := &http.Server{
@@ -41,40 +47,43 @@ func LoadEnv() {
 	log.Println("Loaded .env")
 }
 
-func handleTestSFTP(m *SFTPmanager, w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
+func (a app) handleTestSFTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "image/png")
-	_, done := context.WithTimeout(r.Context(), 3*time.Second)
-	defer done()
-	log.Println(1)
-	t := &Task{
-		ID:     len(m.tasksMap),
-		DoneCh: make(chan bool),
-		Writer: w,
+	rand.Seed(uint64(time.Now().UnixNano()))
+	id := int(rand.Int())
+	log.Println(id)
+	start := time.Now()
+	var buf bytes.Buffer
+	nt := &Task{
+		ID:     id,
+		DoneCh: make(chan *Task),
+		Writer: &buf,
+		Status: TASK_STATUS_INIT,
+		Ctx:    context.Background(),
 	}
-	log.Println("new t", t)
-	m.waitCh <- t
-	isDone, ok := <-t.DoneCh
-	if !ok {
-		log.Println("not ok")
-		return
+	a.m.addTask(nt)
+	defer close(nt.DoneCh)
+	a.m.waitCh <- nt
+
+	t := <-nt.DoneCh
+	a.m.removeTask(t.ID)
+	log.Println("SFTP ", time.Since(start))
+	if _, err := buf.WriteTo(w); err != nil {
+		log.Println("Error writing response:", err)
 	}
-	if isDone {
-		log.Println("done")
-	}
-	log.Println(time.Since(start))
 
 }
 
-func handleTestBlazer(b *Blazer, w http.ResponseWriter, r *http.Request) {
+func (a app) handleTestBlazer(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	w.Header().Add("Content-Type", "image/png")
 
 	var buf bytes.Buffer
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := b.DownloadStreamFile(ctx, 0, "wizzard.png", &buf); err != nil {
+	if err := a.b.DownloadStreamFile(ctx, 0, "wizzard.png", &buf); err != nil {
 		log.Println(err)
 		http.Error(w, "Error downloading file", http.StatusInternalServerError)
 		return
@@ -83,6 +92,6 @@ func handleTestBlazer(b *Blazer, w http.ResponseWriter, r *http.Request) {
 	if _, err := buf.WriteTo(w); err != nil {
 		log.Println("Error writing response:", err)
 	}
-	log.Println(time.Since(start))
+	log.Println("BLAZER: ", time.Since(start))
 
 }
