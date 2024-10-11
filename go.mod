@@ -3,6 +3,7 @@ module github.com/pecet3/concurrent_sftp
 go 1.22.1
 
 require (
+	github.com/Backblaze/blazer v0.7.1
 	github.com/joho/godotenv v1.5.1
 	github.com/pkg/sftp v1.13.6
 	golang.org/x/crypto v0.28.0

@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/devcontainers/go:1-1.23-bookworm
+FROM mcr.microsoft.com/devcontainers/go:1-1.23-bookworm AS builder
 
 WORKDIR /app
 
@@ -12,19 +12,21 @@ RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux go build -o main .
 
 # Etap finalny
+FROM scratch
 
+WORKDIR /
+
+# Kopiowanie skompilowanej aplikacji z etapu budowania
+COPY --from=builder /app/main .
 
 # Kopiowanie pliku .env
-COPY .env .
+COPY --from=builder /app/.env .
 
-# Instalacja certyfikatów CA (często wymagane dla HTTPS)
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+# Kopiowanie certyfikatów CA
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Ustawienie zmiennej środowiskowej dla portu
 ENV PORT=9000
 
 # Wystawienie portu
 EXPOSE 9000
-
-# Uruchomienie aplikacji
-CMD ["./main"]
