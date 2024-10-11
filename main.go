@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"log"
 	"net/http"
 	"time"
@@ -11,21 +11,8 @@ import (
 
 func main() {
 	LoadEnv()
-	m := NewSFTPmanager(100)
+	m := NewSFTPmanager(8)
 	go m.Run()
-	log.Println("new t")
-	t := &Task{
-		DoneCh: make(chan bool),
-	}
-	log.Println("3", t)
-	time.Sleep(time.Second * 1)
-	log.Println("2", t)
-	time.Sleep(time.Second * 1)
-	log.Println("1", t)
-	time.Sleep(time.Second * 1)
-	m.waitCh <- t
-	<-t.DoneCh
-	log.Println("done")
 
 	mux := http.NewServeMux()
 	mux.Handle("/test", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,15 +37,23 @@ func LoadEnv() {
 }
 
 func handleTest(m *SFTPmanager, w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "image/png")
+	_, done := context.WithTimeout(r.Context(), 3*time.Second)
+	defer done()
 	log.Println(1)
-	start := time.Now()
 	t := &Task{
+		ID:     len(m.tasksMap),
 		DoneCh: make(chan bool),
+		Writer: w,
 	}
 	log.Println("new t", t)
 	m.waitCh <- t
-	<-t.DoneCh
-	elapsed := time.Since(start)
-	log.Println("done")
-	w.Write([]byte(fmt.Sprintf(`task done in: %v`, elapsed)))
+	isDone, ok := <-t.DoneCh
+	if !ok {
+		log.Println("not ok")
+		return
+	}
+	if isDone {
+		log.Println("done")
+	}
 }

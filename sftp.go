@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -18,8 +21,9 @@ const (
 
 type Task struct {
 	ID     int
-	DoneCh chan bool
+	DoneCh chan (bool)
 	Status string
+	Writer io.Writer
 }
 
 func (t *Task) Process() {
@@ -30,16 +34,13 @@ func (t *Task) Process() {
 func (m *SFTPmanager) addTask(t *Task) {
 	m.tMu.Lock()
 	defer m.tMu.Unlock()
-	lenTm := len(m.tasksMap)
-	m.tasksMap[lenTm+1] = t
+	m.tasksMap[t.ID] = t
 }
 
 func (m *SFTPmanager) removeTask(id int) {
 	m.tMu.Lock()
 	defer m.tMu.Unlock()
-	if _, exists := m.tasksMap[id]; exists {
-		delete(m.tasksMap, id)
-	}
+	delete(m.tasksMap, id)
 }
 func (m *SFTPmanager) getTask(id int) *Task {
 	m.cMu.Lock()
@@ -71,16 +72,16 @@ func (m *SFTPmanager) updateTaskStatus(id int, status string) {
 }
 
 type SFTPmanager struct {
-	workers  map[int]*SFTP
+	workers  map[int]*Worker
 	tasksMap map[int]*Task
 	cMu      sync.Mutex
 	tMu      sync.Mutex
-	closeCh  chan (*SFTP)
-	doneCh   chan *SFTP
+	closeCh  chan (*Worker)
+	doneCh   chan *Worker
 	waitCh   chan *Task
 }
 
-type SFTP struct {
+type Worker struct {
 	id          int
 	client      *sftp.Client
 	ssh         *ssh.Client
@@ -94,7 +95,7 @@ type SFTP struct {
 	currentTask *Task
 }
 
-func (m *SFTPmanager) GetUnusingWorker(t *Task) *SFTP {
+func (m *SFTPmanager) GetUnusingWorker() *Worker {
 	m.cMu.Lock()
 	defer m.cMu.Unlock()
 
@@ -102,14 +103,13 @@ func (m *SFTPmanager) GetUnusingWorker(t *Task) *SFTP {
 	for i, w := range m.workers {
 		if !w.isInUse {
 			log.Println("Issued unusing worker id", i)
-			w.currentTask = t
 			return w
 		}
 	}
 
 	return nil
 }
-func (m *SFTPmanager) GetWorker(id int) *SFTP {
+func (m *SFTPmanager) GetWorker(id int) *Worker {
 	m.cMu.Lock()
 	defer m.cMu.Unlock()
 
@@ -126,42 +126,14 @@ func (m *SFTPmanager) UpdateIsInUse(id int, isInUse bool) {
 		client.isInUse = isInUse
 	}
 }
-func (m *SFTPmanager) Run() {
-	for {
-		select {
-		case t := <-m.waitCh:
-			t.ID = len(m.tasksMap) + 1
-			log.Println("received task", t.ID)
-			w := m.GetUnusingWorker(t)
-			if w != nil {
-				m.UpdateIsInUse(t.ID, true)
-				m.updateTaskStatus(t.ID, TASK_STATUS_PROCESSING)
-				go w.process(t, &m.doneCh)
-				continue
-			}
-			log.Println("Not available workers")
-			t.Status = TASK_STATUS_WAITING
-			m.addTask(t)
-			continue
-		case w := <-m.doneCh:
-			log.Println("DoneCh", w.currentTask.ID)
-			t := w.m.getWaitingTask()
-			if t == nil {
-				continue
-			}
-			log.Println("Worker got waiting task", t.ID)
-			go w.process(t, &m.doneCh)
-		}
-	}
-}
 
 func NewSFTPmanager(numClients int) *SFTPmanager {
 	m := &SFTPmanager{
-		workers:  make(map[int]*SFTP),
-		doneCh:   make(chan *SFTP),
+		workers:  make(map[int]*Worker),
+		doneCh:   make(chan *Worker),
 		waitCh:   make(chan *Task),
 		tasksMap: make(map[int]*Task),
-		closeCh:  make(chan *SFTP),
+		closeCh:  make(chan *Worker),
 	}
 	log.Println("Initialized")
 
@@ -182,28 +154,28 @@ func NewSFTPmanager(numClients int) *SFTPmanager {
 	wg.Wait()
 	return m
 }
-func newWorker(id int, m *SFTPmanager) *SFTP {
-	// user := os.Getenv("SFTP_USER")
-	// server := os.Getenv("SFTP_SERVER")
-	// password := os.Getenv("SFTP_PASSWORD")
+func newWorker(id int, m *SFTPmanager) *Worker {
+	user := os.Getenv("SFTP_USER")
+	server := os.Getenv("SFTP_SERVER")
+	password := os.Getenv("SFTP_PASSWORD")
 
-	// if user == "" || server == "" || password == "" {
-	// 	log.Println("Missing SFTP configuration")
-	// 	return nil
-	// }
+	if user == "" || server == "" || password == "" {
+		log.Println("Missing SFTP configuration")
+		return nil
+	}
 
-	// config := &ssh.ClientConfig{
-	// 	User: user,
-	// 	Auth: []ssh.AuthMethod{
-	// 		ssh.Password(password),
-	// 	},
-	// 	HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	// 	Timeout:         30 * time.Second,
-	// }
-	s := &SFTP{
-		id: id,
-		// config:     config,
-		// server:     server,
+	config := &ssh.ClientConfig{
+		User: user,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+	s := &Worker{
+		id:         id,
+		config:     config,
+		server:     server,
 		maxRetries: 5,
 		m:          m,
 		isInUse:    false,
@@ -212,12 +184,12 @@ func newWorker(id int, m *SFTPmanager) *SFTP {
 
 	return s
 }
-func (m *SFTPmanager) AddWorker() (*SFTP, error) {
+func (m *SFTPmanager) AddWorker() (*Worker, error) {
 	worker := newWorker(len(m.workers)+1, m)
-	// err := worker.connect()
-	// if err != nil {
-	// 	return nil, err
-	// }
+	err := worker.connect()
+	if err != nil {
+		return nil, err
+	}
 
 	m.cMu.Lock()
 
@@ -229,7 +201,7 @@ func (m *SFTPmanager) AddWorker() (*SFTP, error) {
 	return worker, nil
 }
 
-func (m *SFTPmanager) RemoveClient(client *SFTP) {
+func (m *SFTPmanager) RemoveClient(client *Worker) {
 	m.cMu.Lock()
 	defer m.cMu.Unlock()
 
@@ -241,7 +213,7 @@ func (m *SFTPmanager) RemoveClient(client *SFTP) {
 	}
 }
 
-func (client *SFTP) monitor(m *SFTPmanager) {
+func (client *Worker) monitor(m *SFTPmanager) {
 	defer client.Close()
 	for {
 		select {
@@ -252,34 +224,70 @@ func (client *SFTP) monitor(m *SFTPmanager) {
 			log.Println("")
 			return
 		case <-time.After(10 * time.Second):
-			// log.Println("pinging")
-			// if err := client.ping(); err != nil {
-			// 	log.Printf("Connection lost to %s, attempting to reconnect...", client.server)
-			// 	if err := client.reconnect(); err != nil {
-			// 		log.Printf("Failed to reconnect to %s: %v", client.server, err)
-			// 		m.RemoveClient(client)
+			if err := client.ping(); err != nil {
+				log.Printf("Connection lost to %s, attempting to reconnect...", client.server)
+				if err := client.reconnect(); err != nil {
+					log.Printf("Failed to reconnect to %s: %v", client.server, err)
+					m.RemoveClient(client)
 
-			// 	}
-			// 	m.closeCh <- client
-			// 	return
-			// }
+				}
+				m.closeCh <- client
+				return
+			}
+		}
+	}
+}
+func (m *SFTPmanager) Run() {
+	for {
+		select {
+		case t := <-m.waitCh:
+			t.ID = len(m.tasksMap) + 1
+			log.Println("received task", t.ID)
+			w := m.GetUnusingWorker()
+			if w != nil {
+				m.UpdateIsInUse(w.id, true)
+				go w.process(t, &m.doneCh)
+				continue
+			}
+			m.addTask(t)
+			continue
+		case w := <-m.doneCh:
+			m.removeTask(w.currentTask.ID)
+			close(w.currentTask.DoneCh)
+			log.Println("DoneCh", w.currentTask.ID)
+			t := w.m.getWaitingTask()
+			if t == nil {
+				m.UpdateIsInUse(w.id, false)
+				continue
+			} else {
+
+				log.Println("Worker got waiting task", t.ID)
+				go w.process(t, &m.doneCh)
+				continue
+			}
+
 		}
 	}
 }
 
-func (client *SFTP) process(t *Task, doneCh *chan *SFTP) *Task {
-	t.Process()
+func (client *Worker) process(t *Task, doneCh *chan *Worker) *Task {
+	_, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err := t.readFile(client.client, t.Writer, "/wizzard.png")
+	if err != nil {
+		log.Println(err)
+		time.Sleep(300 * time.Millisecond)
+		t.readFile(client.client, t.Writer, "/wizzard.png")
+	}
+
 	client.currentTask = t
-	log.Println("Process mid")
-	client.m.UpdateIsInUse(client.id, false)
-	client.m.removeTask(t.ID)
 	t.DoneCh <- true
 	*doneCh <- client
 
 	return t
 }
 
-func (c *SFTP) connect() error {
+func (c *Worker) connect() error {
 	var err error
 	c.ssh, err = ssh.Dial("tcp", c.server, c.config)
 	if err != nil {
@@ -295,7 +303,7 @@ func (c *SFTP) connect() error {
 	return nil
 }
 
-func (c *SFTP) reconnect() error {
+func (c *Worker) reconnect() error {
 	for i := 0; i < c.maxRetries; i++ {
 		if err := c.connect(); err == nil {
 			return nil
@@ -305,9 +313,8 @@ func (c *SFTP) reconnect() error {
 	return errors.New("max retries exceeded")
 }
 
-func (c *SFTP) ping() error {
-	wd, err := c.client.Getwd()
-	log.Println("ping result", wd)
+func (c *Worker) ping() error {
+	_, err := c.client.Getwd()
 	return err
 }
 
@@ -320,10 +327,10 @@ func (c *SFTP) ping() error {
 // 		client.ssh.Close()
 // 		client.client.Close()
 // 	}
-// 	m.workers = make(map[*SFTP]*SFTP)
+// 	m.workers = make(map[*Worker]*Worker)
 // }
 
-func (s *SFTP) Close() {
+func (s *Worker) Close() {
 	defer close(s.closeCh)
 	if s.client != nil {
 		s.client.Close()
@@ -333,43 +340,25 @@ func (s *SFTP) Close() {
 	}
 }
 
-// func (s *SFTP) Write(src, destination string) error {
+func (s *Worker) writeFile(w *Worker, src, destination string) error {
+	remoteFile, err := w.client.Create(destination)
+	if err != nil {
+		return err
+	}
 
-// 	client := s.client
+	defer remoteFile.Close()
 
-// 	err := s.writeFile(client, src, destination)
-// 	if err != nil {
-// 		err := s.writeFile(client, src, destination)
-// 		if err != nil {
-// 			s.closeCh <- true
-// 			return err
-// 		}
-// 	}
-// 	log.Println("Write a file")
-// 	return nil
-// }
+	localFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer localFile.Close()
 
-// func (s *SFTP) writeFile(client *sftp.Client, src, destination string) error {
-// 	remoteFile, err := client.Create(destination)
-// 	if err != nil {
-// 		s.closeCh <- true
-// 		return err
-// 	}
+	_, err = io.Copy(remoteFile, localFile)
+	return err
+}
 
-// 	defer remoteFile.Close()
-
-// 	localFile, err := os.Open(src)
-// 	if err != nil {
-// 		s.closeCh <- true
-// 		return err
-// 	}
-// 	defer localFile.Close()
-
-// 	_, err = io.Copy(remoteFile, localFile)
-// 	return err
-// }
-
-// func (s *SFTP) Read(w io.Writer, path string) error {
+// func (s *Worker) Read(w io.Writer, path string) error {
 
 // 	err := s.readFile(s.client, w, path)
 // 	if err != nil {
@@ -380,17 +369,16 @@ func (s *SFTP) Close() {
 // 	return nil
 // }
 
-// func (s *SFTP) readFile(client *sftp.Client, w io.Writer, path string) error {
-// 	remoteFile, err := client.Open(path)
-// 	if err != nil {
-// 		s.closeCh <- true
-// 		return err
-// 	}
-// 	defer remoteFile.Close()
+func (Task) readFile(client *sftp.Client, w io.Writer, path string) error {
+	remoteFile, err := client.Open(path)
+	if err != nil {
+		return err
+	}
+	defer remoteFile.Close()
 
-// 	_, err = io.Copy(w, remoteFile)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	return nil
-// }
+	_, err = io.Copy(w, remoteFile)
+	if err != nil {
+		return err
+	}
+	return nil
+}
