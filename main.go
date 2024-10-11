@@ -19,7 +19,7 @@ func main() {
 		handleTest(m, w, r)
 	}))
 
-	address := "localhost:9000"
+	address := "0.0.0.0:9000"
 	server := &http.Server{
 		Addr:    address,
 		Handler: mux,
