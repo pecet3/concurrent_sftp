@@ -37,6 +37,7 @@ func LoadEnv() {
 }
 
 func handleTest(m *SFTPmanager, w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	w.Header().Add("Content-Type", "image/png")
 	_, done := context.WithTimeout(r.Context(), 3*time.Second)
 	defer done()
@@ -56,4 +57,6 @@ func handleTest(m *SFTPmanager, w http.ResponseWriter, r *http.Request) {
 	if isDone {
 		log.Println("done")
 	}
+	log.Println(time.Since(start))
+
 }
