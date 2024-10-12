@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"golang.org/x/exp/rand"
 )
 
 type app struct {
@@ -27,7 +26,10 @@ func main() {
 	go m.Run()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/test-sftp", app.handleTestSFTP)
+	mux.HandleFunc("/files/{path}", app.handleServeFiles)
+	mux.HandleFunc("/files", app.handleUpload)
+	mux.HandleFunc("/", app.handleUploadView)
+
 	mux.HandleFunc("/test-blazer", app.handleTestBlazer)
 
 	address := "0.0.0.0:9000"
@@ -45,25 +47,6 @@ func LoadEnv() {
 		log.Fatalf("Error loading .env file: %v", err)
 	}
 	log.Println("Loaded .env")
-}
-
-func (a app) handleTestSFTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Content-Type", "image/png")
-	rand.Seed(uint64(time.Now().UnixNano()))
-	id := int(rand.Int())
-	log.Println(id)
-	start := time.Now()
-	var buf bytes.Buffer
-	f := &File{
-		Id:   id,
-		Path: "",
-	}
-	a.m.Download(f, w)
-	log.Println("SFTP ", time.Since(start))
-	if _, err := buf.WriteTo(w); err != nil {
-		log.Println("Error writing response:", err)
-	}
-
 }
 
 func (a app) handleTestBlazer(w http.ResponseWriter, r *http.Request) {

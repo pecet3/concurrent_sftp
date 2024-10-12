@@ -72,12 +72,12 @@ func (m *SFTPmanager) updateIsInUse(id int, isInUse bool) {
 }
 
 func (m *SFTPmanager) addWorker() *worker {
-	worker := newWorker(len(m.workers)+1, m)
+	w := newWorker(len(m.workers)+1, m)
 	m.wMu.Lock()
 
-	m.workers[worker.id] = worker
+	m.workers[w.id] = w
 	m.wMu.Unlock()
-	return worker
+	return w
 }
 func (m *SFTPmanager) removeWorker(worker *worker) {
 	m.wMu.Lock()

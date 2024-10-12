@@ -37,46 +37,27 @@ type ProcessServices interface {
 	run(*Task) error
 }
 type Task struct {
-	ID           int
-	DoneCh       chan (*Task)
-	Status       string
-	Writer       io.Writer
-	RetryCounter int
-	Worker       *worker
-	Process      ProcessServices
+	ID      int
+	DoneCh  chan (*Task)
+	Status  string
+	Worker  *worker
+	Process ProcessServices
 }
 type downloader struct {
-	path string
+	path   string
+	writer io.Writer
 }
 
 func (d downloader) run(t *Task) error {
-	log.Println("reading file", t.ID)
+	log.Println("download file", t.ID)
+
 	remoteFile, err := t.Worker.sftp.Open(d.path)
 	if err != nil {
 		return err
 	}
 	defer remoteFile.Close()
 
-	_, err = io.Copy(t.Writer, remoteFile)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-type uploader struct {
-	path string
-}
-
-func (d uploader) run(t *Task) error {
-	log.Println("reading file", t.ID)
-	remoteFile, err := t.Worker.sftp.Create(d.path)
-	if err != nil {
-		return err
-	}
-	defer remoteFile.Close()
-
-	_, err = io.Copy(t.Writer, remoteFile)
+	_, err = io.Copy(d.writer, remoteFile)
 	if err != nil {
 		return err
 	}
@@ -88,10 +69,10 @@ func (m *SFTPmanager) Download(f *File, w io.Writer) {
 	nt := &Task{
 		ID:     f.Id,
 		DoneCh: make(chan *Task),
-		Writer: w,
 		Status: TASK_STATUS_INIT,
 		Process: &downloader{
-			path: "/wizzard.png",
+			path:   f.Path,
+			writer: w,
 		},
 	}
 	m.addTask(nt)
@@ -101,15 +82,36 @@ func (m *SFTPmanager) Download(f *File, w io.Writer) {
 	log.Println("Success")
 	m.removeTask(t.ID)
 }
-func (m *SFTPmanager) Upload(f *File, w io.Writer) {
+
+type uploader struct {
+	path   string
+	reader io.Reader
+}
+
+func (d uploader) run(t *Task) error {
+	log.Println("upload file", t.ID)
+	remoteFile, err := t.Worker.sftp.Create(d.path)
+	if err != nil {
+		return err
+	}
+	defer remoteFile.Close()
+
+	_, err = io.Copy(remoteFile, d.reader)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *SFTPmanager) Upload(f *File, w io.Reader) {
 	rand.Seed(uint64(time.Now().UnixNano()))
 	nt := &Task{
 		ID:     f.Id,
 		DoneCh: make(chan *Task),
-		Writer: w,
 		Status: TASK_STATUS_INIT,
 		Process: &uploader{
-			path: "/wizzard.png",
+			path:   f.Path,
+			reader: w,
 		},
 	}
 	m.addTask(nt)
