@@ -29,7 +29,7 @@ func NewSFTPmanager(numworkers int) *SFTPmanager {
 	for i := 0; i < numworkers; i++ {
 		log.Println("<storage> [SFTP] Connecting...")
 		w, err := m.AddWorker()
-		go w.work(m)
+		go w.work()
 		if err != nil {
 			log.Println("Failed to add worker:", err)
 		}
@@ -64,6 +64,14 @@ func (m *SFTPmanager) UpdateIsInUse(id int, isInUse bool) {
 	if worker, exists := m.workers[id]; exists {
 		worker.isInUse = isInUse
 	}
+	c := 0
+	for _, uw := range m.workers {
+		if uw.isInUse {
+			c++
+		}
+	}
+	log.Printf("Workers in use: %d/%d", c, len(m.workers))
+
 }
 
 func (m *SFTPmanager) AddWorker() (*Worker, error) {
@@ -117,13 +125,7 @@ func (m *SFTPmanager) updateTaskStatus(id int, status string) {
 func (m *SFTPmanager) RemoveWorker(worker *Worker) {
 	m.wMu.Lock()
 	defer m.wMu.Unlock()
-
-	if _, exists := m.workers[worker.id]; exists {
-		close(worker.taskCh)
-		worker.ssh.Close()
-		worker.sftp.Close()
-		delete(m.workers, worker.id)
-	}
+	delete(m.workers, worker.id)
 }
 
 func (m *SFTPmanager) Run() {
@@ -150,6 +152,11 @@ func (m *SFTPmanager) Run() {
 			m.updateTaskStatus(nt.ID, TASK_STATUS_PROCESSING)
 			w.taskCh <- nt
 			log.Println("finish task", w.currentTask.ID, "worker: ", w.id)
+		case w := <-m.closeCh:
+			log.Println("error, creating a new worker, closing worker ID", w.id)
+			m.RemoveWorker(w)
+			nw, _ := m.AddWorker()
+			go nw.work()
 		}
 	}
 }

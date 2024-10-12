@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"os"
@@ -52,8 +53,13 @@ func newWorker(id int, m *SFTPmanager) *Worker {
 	return s
 }
 
-func (w *Worker) work(m *SFTPmanager) {
-	defer w.Close()
+func (w *Worker) work() {
+	log.Printf("Worker ID: %d is running ", w.id)
+	ticker := time.NewTicker(time.Second * 10)
+	defer func() {
+		ticker.Stop()
+		w.close()
+	}()
 	for {
 		select {
 		case t := <-w.taskCh:
@@ -66,24 +72,28 @@ func (w *Worker) work(m *SFTPmanager) {
 				if err != nil {
 					log.Println("ERROR, Retrying 2..", t.ID, err)
 					t.Ctx.Err()
-					m.doneCh <- w
+					w.m.doneCh <- w
 					t.DoneCh <- t
 					continue
 				}
 			}
-			m.doneCh <- w
+			w.m.doneCh <- w
 			t.DoneCh <- t
 			continue
-		case <-time.After(10 * time.Second):
-			if err := w.ping(); err != nil {
-				log.Printf("Connection lost to %s, attempting to reconnect...", w.server)
-				if err := w.reconnect(); err != nil {
-					log.Printf("Failed to reconnect to %s: %v", w.server, err)
-					m.RemoveWorker(w)
-
+		case <-ticker.C:
+			if !w.isInUse {
+				ctx, cancel := context.WithTimeout(context.Background(),
+					time.Millisecond*3000)
+				defer cancel()
+				if err := w.ping(ctx); err != nil {
+					if err == context.DeadlineExceeded {
+						log.Printf("Worker: %d Ping timed out to %s", w.id, w.server)
+					} else {
+						log.Printf("Worker: %d Connection lost to %s", w.id, w.server)
+					}
+					w.m.closeCh <- w
+					return
 				}
-				m.closeCh <- w
-				return
 			}
 		}
 	}
@@ -109,17 +119,27 @@ func (c *Worker) reconnect() error {
 		if err := c.connect(); err == nil {
 			return nil
 		}
-		time.Sleep(time.Second * time.Duration(i+1))
 	}
 	return errors.New("max retries exceeded")
 }
 
-func (c *Worker) ping() error {
-	_, err := c.sftp.Getwd()
-	return err
+func (w *Worker) ping(ctx context.Context) error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		_, err := w.sftp.Getwd()
+		errCh <- err
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		return err
+	}
 }
 
-func (s *Worker) Close() {
+func (s *Worker) close() {
 	defer close(s.taskCh)
 	if s.sftp != nil {
 		s.sftp.Close()

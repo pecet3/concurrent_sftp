@@ -18,7 +18,7 @@ type app struct {
 
 func main() {
 	LoadEnv()
-	m := NewSFTPmanager(6)
+	m := NewSFTPmanager(8)
 	b := NewBlazer()
 	app := app{
 		m: m,
