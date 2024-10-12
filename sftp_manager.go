@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 )
 
 type SFTPmanager struct {
@@ -169,6 +170,7 @@ func (m *SFTPmanager) Run() {
 					err := w.connect()
 					if err != nil {
 						log.Println("Connecting againg...")
+						time.Sleep(time.Millisecond * 800)
 						continue
 					} else {
 						break
