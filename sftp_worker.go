@@ -39,7 +39,7 @@ func newWorker(id int, m *SFTPmanager) *worker {
 			ssh.Password(password),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second,
+		Timeout:         15 * time.Second,
 	}
 	s := &worker{
 		id:      id,
@@ -55,7 +55,7 @@ func newWorker(id int, m *SFTPmanager) *worker {
 
 func (w *worker) work() {
 	log.Printf("worker ID: %d is running ", w.id)
-	ticker := time.NewTicker(time.Second * 10)
+	ticker := time.NewTicker(time.Second * 15)
 	defer ticker.Stop()
 
 	for {
@@ -81,7 +81,7 @@ func (w *worker) work() {
 		case <-ticker.C:
 			if !w.isInUse {
 				ctx, cancel := context.WithTimeout(context.Background(),
-					time.Millisecond*3000)
+					time.Millisecond*8000)
 				defer cancel()
 				if err := w.ping(ctx); err != nil {
 					if err == context.DeadlineExceeded {
@@ -115,6 +115,7 @@ func (c *worker) connect() error {
 func (c *worker) reconnect() error {
 	for i := 0; i < 5; i++ {
 		if err := c.connect(); err == nil {
+			log.Println("reconnecting")
 			return nil
 		}
 	}

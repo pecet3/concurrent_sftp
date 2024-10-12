@@ -163,17 +163,20 @@ func (m *SFTPmanager) Run() {
 			log.Println("finish task", w.currentTask.ID, "worker: ", w.id)
 		case w := <-m.closeCh:
 			log.Println("error, creating a new worker, closing worker ID", w.id)
-			m.removeWorker(w)
-			nw := m.addWorker()
-			err := nw.connect()
-			if err != nil {
-				err = w.reconnect()
-				if err != nil {
-					log.Println("FATAL... CANNOT CONNECT WITH SFTP SERVER")
-					continue
+			m.updateIsInUse(w.id, true)
+			go func() {
+				for {
+					err := w.connect()
+					if err != nil {
+						log.Println("Connecting againg...")
+						continue
+					} else {
+						break
+					}
 				}
-			}
-			go nw.work()
+				go w.work()
+				m.updateIsInUse(w.id, false)
+			}()
 		}
 	}
 }
