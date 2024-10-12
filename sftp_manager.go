@@ -1,9 +1,7 @@
 package main
 
 import (
-	"io"
 	"log"
-	"os"
 	"sync"
 	"time"
 )
@@ -15,14 +13,14 @@ type SFTPmanager struct {
 	tMu      sync.RWMutex
 	closeCh  chan (*worker)
 	doneCh   chan *worker
-	waitCh   chan *Task
+	taskCh   chan *Task
 }
 
 func NewSFTPmanager(numworkers int) *SFTPmanager {
 	m := &SFTPmanager{
 		workers:  make(map[int]*worker),
 		doneCh:   make(chan *worker),
-		waitCh:   make(chan *Task),
+		taskCh:   make(chan *Task),
 		tMu:      sync.RWMutex{},
 		tasksMap: make(map[int]*Task),
 		closeCh:  make(chan *worker),
@@ -55,15 +53,7 @@ func (m *SFTPmanager) getUnusingworker() *worker {
 	}
 	return nil
 }
-func (m *SFTPmanager) getworker(id int) *worker {
-	m.wMu.Lock()
-	defer m.wMu.Unlock()
 
-	if worker, exists := m.workers[id]; exists {
-		return worker
-	}
-	return nil
-}
 func (m *SFTPmanager) updateIsInUse(id int, isInUse bool) {
 	m.wMu.Lock()
 	defer m.wMu.Unlock()
@@ -140,7 +130,7 @@ func (m *SFTPmanager) updateTaskWorker(id int, w *worker) {
 func (m *SFTPmanager) Run() {
 	for {
 		select {
-		case t := <-m.waitCh:
+		case t := <-m.taskCh:
 			w := m.getUnusingworker()
 			if w != nil {
 				m.updateIsInUse(w.id, true)
@@ -166,37 +156,20 @@ func (m *SFTPmanager) Run() {
 			log.Println("error, creating a new worker, closing worker ID", w.id)
 			m.updateIsInUse(w.id, true)
 			go func() {
-				for {
-					err := w.connect()
+				for i := 0; i < 30; i++ {
+					err := w.reconnect()
 					if err != nil {
 						log.Println("Connecting againg...")
-						time.Sleep(time.Millisecond * 800)
+						time.Sleep(time.Millisecond * 1300)
 						continue
 					} else {
-						break
+						m.updateIsInUse(w.id, false)
+						go w.work()
+						return
 					}
 				}
-				go w.work()
-				m.updateIsInUse(w.id, false)
+				m.removeWorker(w)
 			}()
 		}
 	}
-}
-
-func (s *worker) writeFile(w *worker, src, destination string) error {
-	remoteFile, err := w.sftp.Create(destination)
-	if err != nil {
-		return err
-	}
-
-	defer remoteFile.Close()
-
-	localFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer localFile.Close()
-
-	_, err = io.Copy(remoteFile, localFile)
-	return err
 }

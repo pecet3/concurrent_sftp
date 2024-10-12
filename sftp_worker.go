@@ -63,13 +63,12 @@ func (w *worker) work() {
 		case t := <-w.taskCh:
 			w.currentTask = t
 			log.Println("PROCESSING NEW TASK IN worker", t.ID)
-			err := t.readFile(w, t.Writer, "/wizzard.png")
+			err := t.Process.run(t)
 			if err != nil {
 				log.Println("ERROR, Retrying...", t.ID, err)
-				err = t.readFile(w, t.Writer, "/wizzard.png")
+				err = t.Process.run(t)
 				if err != nil {
 					log.Println("ERROR, Retrying 2..", t.ID, err)
-					t.Ctx.Err()
 					w.m.doneCh <- w
 					t.DoneCh <- t
 					continue
@@ -115,7 +114,7 @@ func (c *worker) connect() error {
 func (c *worker) reconnect() error {
 	for i := 0; i < 5; i++ {
 		if err := c.connect(); err == nil {
-			log.Println("reconnecting")
+			log.Println("error reconnecting")
 			return nil
 		}
 	}

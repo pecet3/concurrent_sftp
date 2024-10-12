@@ -59,11 +59,10 @@ func (a app) handleTestSFTP(w http.ResponseWriter, r *http.Request) {
 		DoneCh: make(chan *Task),
 		Writer: &buf,
 		Status: TASK_STATUS_INIT,
-		Ctx:    context.Background(),
 	}
 	a.m.addTask(nt)
 	defer close(nt.DoneCh)
-	a.m.waitCh <- nt
+	a.m.taskCh <- nt
 
 	t := <-nt.DoneCh
 	a.m.removeTask(t.ID)
