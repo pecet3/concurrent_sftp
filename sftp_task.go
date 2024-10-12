@@ -64,29 +64,29 @@ func (d downloader) run(t *Task) error {
 	return nil
 }
 
-// func (t *Task) writeFile(w *worker, src, destination string) error {
-// 	remoteFile, err := w.sftp.Create(destination)
-// 	if err != nil {
-// 		return err
-// 	}
+type uploader struct {
+	path string
+}
 
-// 	defer remoteFile.Close()
+func (d uploader) run(t *Task) error {
+	log.Println("reading file", t.ID)
+	remoteFile, err := t.Worker.sftp.Create(d.path)
+	if err != nil {
+		return err
+	}
+	defer remoteFile.Close()
 
-// 	localFile, err := os.Open(src)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	defer localFile.Close()
+	_, err = io.Copy(t.Writer, remoteFile)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
-// 	_, err = io.Copy(remoteFile, localFile)
-// 	return err
-// }
-
-func (m *SFTPmanager) NewTask(w io.Writer) {
+func (m *SFTPmanager) Download(f *File, w io.Writer) {
 	rand.Seed(uint64(time.Now().UnixNano()))
-	id := int(rand.Int())
 	nt := &Task{
-		ID:     id,
+		ID:     f.Id,
 		DoneCh: make(chan *Task),
 		Writer: w,
 		Status: TASK_STATUS_INIT,
@@ -97,7 +97,24 @@ func (m *SFTPmanager) NewTask(w io.Writer) {
 	m.addTask(nt)
 	defer close(nt.DoneCh)
 	m.taskCh <- nt
-
+	t := <-nt.DoneCh
+	log.Println("Success")
+	m.removeTask(t.ID)
+}
+func (m *SFTPmanager) Upload(f *File, w io.Writer) {
+	rand.Seed(uint64(time.Now().UnixNano()))
+	nt := &Task{
+		ID:     f.Id,
+		DoneCh: make(chan *Task),
+		Writer: w,
+		Status: TASK_STATUS_INIT,
+		Process: &uploader{
+			path: "/wizzard.png",
+		},
+	}
+	m.addTask(nt)
+	defer close(nt.DoneCh)
+	m.taskCh <- nt
 	t := <-nt.DoneCh
 	m.removeTask(t.ID)
 }

@@ -54,18 +54,11 @@ func (a app) handleTestSFTP(w http.ResponseWriter, r *http.Request) {
 	log.Println(id)
 	start := time.Now()
 	var buf bytes.Buffer
-	nt := &Task{
-		ID:     id,
-		DoneCh: make(chan *Task),
-		Writer: &buf,
-		Status: TASK_STATUS_INIT,
+	f := &File{
+		Id:   id,
+		Path: "",
 	}
-	a.m.addTask(nt)
-	defer close(nt.DoneCh)
-	a.m.taskCh <- nt
-
-	t := <-nt.DoneCh
-	a.m.removeTask(t.ID)
+	a.m.Download(f, w)
 	log.Println("SFTP ", time.Since(start))
 	if _, err := buf.WriteTo(w); err != nil {
 		log.Println("Error writing response:", err)
