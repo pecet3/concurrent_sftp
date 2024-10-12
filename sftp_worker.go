@@ -11,7 +11,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-type Worker struct {
+type worker struct {
 	id          int
 	sftp        *sftp.Client
 	ssh         *ssh.Client
@@ -23,7 +23,7 @@ type Worker struct {
 	currentTask *Task
 }
 
-func newWorker(id int, m *SFTPmanager) *Worker {
+func newWorker(id int, m *SFTPmanager) *worker {
 	user := os.Getenv("SFTP_USER")
 	server := os.Getenv("SFTP_SERVER")
 	password := os.Getenv("SFTP_PASSWORD")
@@ -41,7 +41,7 @@ func newWorker(id int, m *SFTPmanager) *Worker {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         30 * time.Second,
 	}
-	s := &Worker{
+	s := &worker{
 		id:      id,
 		config:  config,
 		server:  server,
@@ -53,18 +53,16 @@ func newWorker(id int, m *SFTPmanager) *Worker {
 	return s
 }
 
-func (w *Worker) work() {
-	log.Printf("Worker ID: %d is running ", w.id)
+func (w *worker) work() {
+	log.Printf("worker ID: %d is running ", w.id)
 	ticker := time.NewTicker(time.Second * 10)
-	defer func() {
-		ticker.Stop()
-		w.close()
-	}()
+	defer ticker.Stop()
+
 	for {
 		select {
 		case t := <-w.taskCh:
 			w.currentTask = t
-			log.Println("PROCESSING NEW TASK IN WORKER", t.ID)
+			log.Println("PROCESSING NEW TASK IN worker", t.ID)
 			err := t.readFile(w, t.Writer, "/wizzard.png")
 			if err != nil {
 				log.Println("ERROR, Retrying...", t.ID, err)
@@ -87,9 +85,9 @@ func (w *Worker) work() {
 				defer cancel()
 				if err := w.ping(ctx); err != nil {
 					if err == context.DeadlineExceeded {
-						log.Printf("Worker: %d Ping timed out to %s", w.id, w.server)
+						log.Printf("worker: %d Ping timed out to %s", w.id, w.server)
 					} else {
-						log.Printf("Worker: %d Connection lost to %s", w.id, w.server)
+						log.Printf("worker: %d Connection lost to %s", w.id, w.server)
 					}
 					w.m.closeCh <- w
 					return
@@ -98,7 +96,7 @@ func (w *Worker) work() {
 		}
 	}
 }
-func (c *Worker) connect() error {
+func (c *worker) connect() error {
 	var err error
 	c.ssh, err = ssh.Dial("tcp", c.server, c.config)
 	if err != nil {
@@ -114,7 +112,7 @@ func (c *Worker) connect() error {
 	return nil
 }
 
-func (c *Worker) reconnect() error {
+func (c *worker) reconnect() error {
 	for i := 0; i < 5; i++ {
 		if err := c.connect(); err == nil {
 			return nil
@@ -123,7 +121,7 @@ func (c *Worker) reconnect() error {
 	return errors.New("max retries exceeded")
 }
 
-func (w *Worker) ping(ctx context.Context) error {
+func (w *worker) ping(ctx context.Context) error {
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -139,7 +137,7 @@ func (w *Worker) ping(ctx context.Context) error {
 	}
 }
 
-func (s *Worker) close() {
+func (s *worker) close() {
 	defer close(s.taskCh)
 	if s.sftp != nil {
 		s.sftp.Close()

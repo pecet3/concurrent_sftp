@@ -22,6 +22,7 @@ type Task struct {
 	Ctx          context.Context
 	Wg           sync.WaitGroup
 	RetryCounter int
+	Worker       *worker
 }
 
 func (t *Task) Process() {
@@ -29,7 +30,7 @@ func (t *Task) Process() {
 	time.Sleep(time.Millisecond * 300)
 
 }
-func (t *Task) readFile(wr *Worker, w io.Writer, path string) error {
+func (t *Task) readFile(wr *worker, w io.Writer, path string) error {
 	log.Println("reading file", t.ID)
 	remoteFile, err := wr.sftp.Open(path)
 	if err != nil {
