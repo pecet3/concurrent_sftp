@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"os"
 )
 
 var tmpl = template.Must(template.New("upload").Parse(`
@@ -43,12 +42,6 @@ func (a app) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		defer file.Close()
 
-		dst, err := os.Create("./uploads/" + header.Filename)
-		if err != nil {
-			http.Error(w, "Error saving file", http.StatusInternalServerError)
-			return
-		}
-		defer dst.Close()
 		f := &File{
 			Path: header.Filename,
 		}
