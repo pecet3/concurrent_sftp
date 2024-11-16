@@ -45,7 +45,7 @@ func (d downloader) run(t *Task) error {
 	return nil
 }
 
-func (m *SFTPmanager) Download(ctx context.Context, f *File, w io.Writer) error {
+func (m *Manager) Download(ctx context.Context, f *File, w io.Writer) error {
 	errCh := make(chan error, 1)
 	go func() {
 		id := len(m.tasksMap) + 1
@@ -101,7 +101,7 @@ func (d uploader) run(t *Task) error {
 	return nil
 }
 
-func (m *SFTPmanager) Upload(ctx context.Context, f *File, w io.Reader) error {
+func (m *Manager) Upload(ctx context.Context, f *File, w io.Reader) error {
 	log.Println("uploading")
 	errCh := make(chan error, 1)
 	go func() {

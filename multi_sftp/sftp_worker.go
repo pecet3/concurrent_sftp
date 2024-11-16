@@ -19,11 +19,11 @@ type worker struct {
 	server      string
 	isInUse     bool
 	taskCh      chan *Task
-	m           *SFTPmanager
+	m           *Manager
 	currentTask *Task
 }
 
-func newWorker(id int, m *SFTPmanager) *worker {
+func newWorker(id int, m *Manager) *worker {
 	user := os.Getenv("SFTP_USER")
 	server := os.Getenv("SFTP_SERVER")
 	password := os.Getenv("SFTP_PASSWORD")

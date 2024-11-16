@@ -12,20 +12,12 @@ import (
 )
 
 type File struct {
-	Id         int       `json:"-"`
-	Uuid       string    `json:"uuid"`
-	IsNsfw     bool      `json:"is_nsfw"`
-	IsPublic   bool      `json:"is_public"`
 	FileName   string    `json:"file_name"`
 	Path       string    `json:"-"`
-	Url        string    `json:"url"`
 	Size       int64     `json:"size"`
 	Ext        string    `json:"ext"`
-	IsTemp     bool      `json:"is_temp"`
-	UserId     int       `json:"-"`
-	ComesFrom  string    `json:"-"`
 	CreatedAt  time.Time `json:"created_at"`
-	LastOpenAt time.Time `json:"-"`
+	LastOpenAt time.Time `json:"last_open_at"`
 }
 
 func (f File) RemoveFile(s *MultiSFTP, fDb *File) error {
@@ -68,7 +60,7 @@ func (f File) DownloadAndSave(ctx context.Context,
 		return nil, fmt.Errorf("could not save image: %v", err)
 	}
 	defer file.Close()
-	err = s.SFTPmanager.Upload(ctx, fDb, file)
+	err = s.Manager.Upload(ctx, fDb, file)
 	if err != nil {
 		log.Println(err)
 	}
@@ -115,7 +107,7 @@ func (f File) SaveBytes(s *MultiSFTP,
 		log.Println(err)
 		return nil, err
 	}
-	err = s.SFTPmanager.Upload(ctx, fDb, file)
+	err = s.Manager.Upload(ctx, fDb, file)
 	if err != nil {
 		log.Println(err)
 		return nil, err
@@ -141,7 +133,7 @@ func (f File) SaveFileForm(ctx context.Context, s *MultiSFTP, fh *multipart.File
 	if _, err := io.Copy(dst, file); err != nil {
 		return err
 	}
-	err = s.SFTPmanager.Upload(ctx, fDb, dst)
+	err = s.Manager.Upload(ctx, fDb, dst)
 	if err != nil {
 		return err
 	}

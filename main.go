@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/pecet3/concurrent_sftp/multi_sftp"
@@ -17,19 +14,19 @@ type app struct {
 
 func main() {
 	LoadEnv()
-	m := multi_sftp.New()
+	c := multi_sftp.Config{
+		MaxCacheSize: 1024 * 1024 * 10, // 10 gb
+	}
+	m := multi_sftp.New(c)
 	app := app{
 		m: m,
-		b: b,
 	}
-	go m.Run()
+	m.Manager.Run()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/files/{path}", app.handleServeFiles)
 	mux.HandleFunc("/files", app.handleUpload)
 	mux.HandleFunc("/", app.handleUploadView)
-
-	mux.HandleFunc("/test-blazer", app.handleTestBlazer)
 
 	address := "0.0.0.0:9000"
 	server := &http.Server{
@@ -46,26 +43,4 @@ func LoadEnv() {
 		log.Fatalf("Error loading .env file: %v", err)
 	}
 	log.Println("Loaded .env")
-}
-
-func (a app) handleTestBlazer(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	w.Header().Add("Content-Type", "image/png")
-
-	var buf bytes.Buffer
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := a.b.DownloadStreamFile(ctx, 0, "wizzard.png", &buf); err != nil {
-		log.Println(err)
-		http.Error(w, "Error downloading file", http.StatusInternalServerError)
-		return
-	}
-
-	if _, err := buf.WriteTo(w); err != nil {
-		log.Println("Error writing response:", err)
-	}
-	log.Println("BLAZER: ", time.Since(start))
-
 }

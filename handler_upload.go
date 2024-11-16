@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"net/http"
+	"time"
+
+	"github.com/pecet3/concurrent_sftp/multi_sftp"
 )
 
 var tmpl = template.Must(template.New("upload").Parse(`
@@ -42,10 +46,12 @@ func (a app) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		defer file.Close()
 
-		f := &File{
+		f := &multi_sftp.File{
 			Path: header.Filename,
 		}
-		a.m.Upload(f, file)
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		defer cancel()
+		a.m.Manager.Upload(ctx, f, file)
 
 		fmt.Fprintf(w, "File %s uploaded successfully!", header.Filename)
 	}

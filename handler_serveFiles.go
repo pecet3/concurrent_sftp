@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"net/http"
 	"time"
@@ -24,7 +25,10 @@ func (a app) handleServeFiles(w http.ResponseWriter, r *http.Request) {
 	f := &multi_sftp.File{
 		Path: path,
 	}
-	a.m.Download(f, &buf)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+	a.m.Manager.Download(ctx, f, &buf)
+
 	log.Println("SFTP ", time.Since(start))
 	if _, err := buf.WriteTo(w); err != nil {
 		log.Println("Error writing response:", err)
