@@ -8,17 +8,16 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/pecet3/concurrent_sftp/multi_sftp"
 )
 
 type app struct {
-	m *SFTPmanager
-	b *Blazer
+	m *multi_sftp.MultiSFTP
 }
 
 func main() {
 	LoadEnv()
-	m := NewSFTPmanager(6)
-	b := NewBlazer()
+	m := multi_sftp.New()
 	app := app{
 		m: m,
 		b: b,

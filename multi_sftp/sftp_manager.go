@@ -1,4 +1,4 @@
-package main
+package multi_sftp
 
 import (
 	"log"
@@ -16,7 +16,7 @@ type SFTPmanager struct {
 	taskCh   chan *Task
 }
 
-func NewSFTPmanager(numworkers int) *SFTPmanager {
+func newSFTPmanager(numworkers int) *SFTPmanager {
 	m := &SFTPmanager{
 		workers:  make(map[int]*worker),
 		doneCh:   make(chan *worker),

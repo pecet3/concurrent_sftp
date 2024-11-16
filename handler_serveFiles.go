@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pecet3/concurrent_sftp/multi_sftp"
 	"golang.org/x/exp/rand"
 )
 
@@ -20,8 +21,7 @@ func (a app) handleServeFiles(w http.ResponseWriter, r *http.Request) {
 	log.Println(id)
 	start := time.Now()
 	var buf bytes.Buffer
-	f := &File{
-		Id:   id,
+	f := &multi_sftp.File{
 		Path: path,
 	}
 	a.m.Download(f, &buf)

@@ -1,4 +1,4 @@
-package main
+package multi_sftp
 
 import (
 	"context"
