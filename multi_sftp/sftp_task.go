@@ -14,7 +14,7 @@ const (
 	TASK_STATUS_ERROR      = "error"
 )
 
-type ProcessServices interface {
+type processable interface {
 	run(*Task) error
 }
 type Task struct {
@@ -22,7 +22,7 @@ type Task struct {
 	DoneCh  chan (*Task)
 	Status  string
 	Worker  *worker
-	Process ProcessServices
+	Process processable
 }
 type downloader struct {
 	path   string
@@ -30,7 +30,7 @@ type downloader struct {
 }
 
 func (d downloader) run(t *Task) error {
-	log.Println("download file", t.ID)
+	log.Println("[MultiSFTP]<Task> download file", t.ID)
 
 	remoteFile, err := t.Worker.sftp.Open(d.path)
 	if err != nil {
@@ -62,7 +62,7 @@ func (m *Manager) Download(ctx context.Context, f *File, w io.Writer) error {
 		defer close(nt.DoneCh)
 		m.taskCh <- nt
 		t := <-nt.DoneCh
-		log.Println("Success")
+		log.Println("[MultiSFTP]<Task> Success")
 		m.removeTask(t.ID)
 		if t.Status == TASK_STATUS_ERROR {
 			errCh <- errors.New("job failed")
@@ -84,7 +84,7 @@ type uploader struct {
 }
 
 func (d uploader) run(t *Task) error {
-	log.Println("upload file", d.path)
+	log.Println("[MultiSFTP]<Task> upload file", d.path)
 	if err := t.Worker.sftp.MkdirAll(d.path); err != nil {
 		return err
 	}
@@ -102,7 +102,7 @@ func (d uploader) run(t *Task) error {
 }
 
 func (m *Manager) Upload(ctx context.Context, f *File, w io.Reader) error {
-	log.Println("uploading")
+	log.Println("[MultiSFTP]<Task> uploading")
 	errCh := make(chan error, 1)
 	go func() {
 		id := len(m.tasksMap) + 1
@@ -120,7 +120,61 @@ func (m *Manager) Upload(ctx context.Context, f *File, w io.Reader) error {
 		defer close(nt.DoneCh)
 		m.taskCh <- nt
 		t := <-nt.DoneCh
-		log.Println("DONE")
+		log.Println("[MultiSFTP]<Task> DONE")
+		m.removeTask(t.ID)
+		if t.Status == TASK_STATUS_ERROR {
+			errCh <- errors.New("job failed")
+			return
+		}
+		errCh <- nil
+	}()
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errCh:
+		return err
+
+	}
+}
+
+// to do
+type deleter struct {
+	path  string
+	fName string
+}
+
+func (d deleter) run(t *Task) error {
+	log.Println("[MultiSFTP]<Task> upload file", d.path)
+	if err := t.Worker.sftp.MkdirAll(d.path); err != nil {
+		return err
+	}
+	err := t.Worker.sftp.RemoveAll(d.path + d.fName)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *Manager) Delete(ctx context.Context, path, fName string) error {
+	log.Println("[MultiSFTP]<Task> uploading")
+	errCh := make(chan error, 1)
+	go func() {
+		id := len(m.tasksMap) + 1
+		nt := &Task{
+			ID:     id,
+			DoneCh: make(chan *Task),
+			Status: TASK_STATUS_INIT,
+			Process: &uploader{
+				path:  path,
+				fName: fName,
+			},
+		}
+		m.addTask(nt)
+		defer close(nt.DoneCh)
+		m.taskCh <- nt
+		t := <-nt.DoneCh
+		log.Println("[MultiSFTP]<Task> DONE")
 		m.removeTask(t.ID)
 		if t.Status == TASK_STATUS_ERROR {
 			errCh <- errors.New("job failed")
