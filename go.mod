@@ -1,6 +1,6 @@
 module github.com/pecet3/concurrent_sftp
 
-go 1.22.1
+go 1.23.4
 
 require (
 	github.com/Backblaze/blazer v0.7.1
@@ -12,5 +12,6 @@ require (
 
 require (
 	github.com/kr/fs v0.1.0 // indirect
+	github.com/pecet3/logger v0.0.0-20250102172949-2b8a3deff7ba // indirect
 	golang.org/x/sys v0.26.0 // indirect
 )

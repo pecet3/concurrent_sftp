@@ -13,7 +13,6 @@ type MultiSFTP struct {
 func New(c Config) *MultiSFTP {
 	sftpM := newManager(c.Workers)
 	cache := newCache(c.MaxCacheSize)
-
 	if c.IsDisabledCache {
 		cache = nil
 	}
